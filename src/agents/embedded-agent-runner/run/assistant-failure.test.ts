@@ -15,6 +15,7 @@ import { runWithModelFallback } from "../../model-fallback-runner.js";
 import { resolveAgentRunErrorLifecycleFields } from "../../run-termination.js";
 import {
   buildEmbeddedRunnerAssistant,
+  createMockUsage,
   makeEmbeddedRunnerAttempt,
 } from "../../test-helpers/embedded-agent-runner-e2e-fixtures.js";
 import { createModelFallbackConfig } from "../../test-helpers/model-fallback-config-fixture.js";
@@ -765,7 +766,7 @@ describe("handleEmbeddedAssistantFailure", () => {
       stopReason: "error",
       errorMessage: "Provider completed tool call with malformed JSON arguments",
       content: [],
-      usage: { input: 640, output: 1329, totalTokens: 1969 },
+      usage: createMockUsage(640, 1329),
     });
     const attempt = makeEmbeddedRunnerAttempt({
       assistantTexts: [],
@@ -800,7 +801,7 @@ describe("handleEmbeddedAssistantFailure", () => {
       stopReason: "error",
       errorMessage: "Provider completed tool call with malformed JSON arguments",
       content: [],
-      usage: { input: 640, output: 1329, totalTokens: 1969 },
+      usage: createMockUsage(640, 1329),
     });
     const attempt = makeEmbeddedRunnerAttempt({
       assistantTexts: [],

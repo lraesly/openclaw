@@ -94,13 +94,9 @@ export function shouldRetrySilentErrorAssistantTurn(params: {
 function isPreDispatchToolCallRejection(
   assistant: NonNullable<EmbeddedRunAttemptResult["lastAssistant"]>,
 ): boolean {
-  const errorCode = (assistant as { errorCode?: unknown }).errorCode;
-  const errorMessage = (assistant as { errorMessage?: unknown }).errorMessage;
   return (
-    errorCode === MALFORMED_TOOL_CALL_ARGUMENTS_ERROR_CODE ||
-    isPreDispatchToolCallRejectionMessage(
-      typeof errorMessage === "string" ? errorMessage : undefined,
-    )
+    assistant.errorCode === MALFORMED_TOOL_CALL_ARGUMENTS_ERROR_CODE ||
+    isPreDispatchToolCallRejectionMessage(assistant.errorMessage)
   );
 }
 
