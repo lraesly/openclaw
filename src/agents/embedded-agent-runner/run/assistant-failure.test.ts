@@ -754,6 +754,74 @@ describe("handleEmbeddedAssistantFailure", () => {
     expect(fixture.traceAttempts).toEqual([]);
   });
 
+  it("retries a pre-dispatch tool-call rejection whose content was discarded", async () => {
+    // Direct Claude streams discard the whole message on this terminal error, leaving
+    // empty content with positive output usage; the rejected tool set never dispatched.
+    const fixture = makeExhaustedCredentialFailureInput();
+    const assistant = buildEmbeddedRunnerAssistant({
+      api: "anthropic-messages",
+      provider: "anthropic",
+      model: "claude-opus-5",
+      stopReason: "error",
+      errorMessage: "Provider completed tool call with malformed JSON arguments",
+      content: [],
+      usage: { input: 640, output: 1329, totalTokens: 1969 },
+    });
+    const attempt = makeEmbeddedRunnerAttempt({
+      assistantTexts: [],
+      lastAssistant: assistant,
+      currentAttemptAssistant: assistant,
+      currentAttemptReplayMetadata: { hadPotentialSideEffects: false, replaySafe: true },
+    });
+    fixture.input.attempt = attempt;
+    fixture.input.attemptAssistant = assistant;
+    fixture.input.currentAttemptAssistant = assistant;
+    fixture.input.terminalState = resolveEmbeddedRunAttemptTerminalState({ attempt, assistant });
+    fixture.input.emptyErrorRetries = 0;
+    fixture.input.maybeRefreshRuntimeAuthForAuthError = vi.fn(async () => true);
+
+    const outcome = await handleEmbeddedAssistantFailure(fixture.input);
+
+    expect(outcome).toMatchObject({
+      action: "retry",
+      emptyErrorRetries: 1,
+    });
+    expect(fixture.input.maybeRefreshRuntimeAuthForAuthError).not.toHaveBeenCalled();
+    expect(fixture.advanceAuthProfile).not.toHaveBeenCalled();
+    expect(fixture.traceAttempts).toEqual([]);
+  });
+
+  it("stops retrying a pre-dispatch tool-call rejection once the bounded budget is spent", async () => {
+    const fixture = makeExhaustedCredentialFailureInput();
+    const assistant = buildEmbeddedRunnerAssistant({
+      api: "anthropic-messages",
+      provider: "anthropic",
+      model: "claude-opus-5",
+      stopReason: "error",
+      errorMessage: "Provider completed tool call with malformed JSON arguments",
+      content: [],
+      usage: { input: 640, output: 1329, totalTokens: 1969 },
+    });
+    const attempt = makeEmbeddedRunnerAttempt({
+      assistantTexts: [],
+      lastAssistant: assistant,
+      currentAttemptAssistant: assistant,
+      currentAttemptReplayMetadata: { hadPotentialSideEffects: false, replaySafe: true },
+    });
+    fixture.input.attempt = attempt;
+    fixture.input.attemptAssistant = assistant;
+    fixture.input.currentAttemptAssistant = assistant;
+    fixture.input.terminalState = resolveEmbeddedRunAttemptTerminalState({ attempt, assistant });
+    fixture.input.emptyErrorRetries = 3;
+    fixture.input.fallbackConfigured = false;
+    fixture.input.maybeRefreshRuntimeAuthForAuthError = vi.fn(async () => true);
+
+    const outcome = await handleEmbeddedAssistantFailure(fixture.input);
+
+    expect(outcome.action).toBe("proceed");
+    expect(outcome.emptyErrorRetries).toBe(3);
+  });
+
   it("does not cache an exact credential-file failure from a fallback candidate", async () => {
     const previous = process.env.OPENCLAW_FALLBACK_SKIP_TTL_MS;
     process.env.OPENCLAW_FALLBACK_SKIP_TTL_MS = "60000";

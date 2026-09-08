@@ -1,6 +1,8 @@
 /** Owns side-effect-sensitive retry and silent-reply recovery policy. */
+import { MALFORMED_TOOL_CALL_ARGUMENTS_ERROR_CODE } from "../../../llm/types.js";
 import { isTerminalAssistantError } from "../../../llm/utils/retry.js";
 import { hasAcceptedSessionSpawn } from "../../accepted-session-spawn.js";
+import { isPreDispatchToolCallRejectionMessage } from "../../failover/message-patterns.js";
 import { hasOnlyAssistantReasoningContent } from "../../replay-turn-classification.js";
 import { TOOL_FAILURE_INSTRUCTION } from "../../tool-outcome-instructions.js";
 import {
@@ -79,10 +81,27 @@ export function shouldRetrySilentErrorAssistantTurn(params: {
     return false;
   }
   if (content.length === 0) {
-    return !hasPositiveOutputTokenUsage(assistant);
+    // Positive output usually means the provider made progress a resubmit would
+    // duplicate. A pre-dispatch tool-call rejection is the exception: the transport
+    // validated the whole tool set, threw before any tool ran, and discarded the
+    // content, so those tokens bought nothing that can replay.
+    return !hasPositiveOutputTokenUsage(assistant) || isPreDispatchToolCallRejection(assistant);
   }
 
   return hasOnlyAssistantReasoningContent(assistant);
+}
+
+function isPreDispatchToolCallRejection(
+  assistant: NonNullable<EmbeddedRunAttemptResult["lastAssistant"]>,
+): boolean {
+  const errorCode = (assistant as { errorCode?: unknown }).errorCode;
+  const errorMessage = (assistant as { errorMessage?: unknown }).errorMessage;
+  return (
+    errorCode === MALFORMED_TOOL_CALL_ARGUMENTS_ERROR_CODE ||
+    isPreDispatchToolCallRejectionMessage(
+      typeof errorMessage === "string" ? errorMessage : undefined,
+    )
+  );
 }
 
 function shouldSkipNonVisibleTurnRetry(params: {

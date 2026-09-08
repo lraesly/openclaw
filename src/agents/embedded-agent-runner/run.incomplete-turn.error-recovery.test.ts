@@ -1,6 +1,9 @@
 // Focused incomplete-turn behavior coverage.
 import { describe, expect, it } from "vitest";
-import { PROVIDER_POST_DISPATCH_AMBIGUITY_ERROR_CODE } from "../../llm/types.js";
+import {
+  MALFORMED_TOOL_CALL_ARGUMENTS_ERROR_CODE,
+  PROVIDER_POST_DISPATCH_AMBIGUITY_ERROR_CODE,
+} from "../../llm/types.js";
 import {
   buildEmbeddedRunnerAssistant,
   makeEmbeddedRunnerAttempt,
@@ -124,6 +127,96 @@ describe("incomplete-turn error recovery", () => {
     expect(
       shouldRetrySilentErrorAssistantTurn({
         attempt: makeAttemptResult({ assistantTexts: [], lastAssistant: assistant }),
+        assistant,
+      }),
+    ).toBe(false);
+  });
+
+  it.each([
+    {
+      name: "the shared terminal argument parser",
+      errorMessage: "Provider completed tool call with malformed JSON arguments",
+    },
+    {
+      name: "an unsealed Anthropic tool block",
+      errorMessage: "Provider completed stream with an incomplete tool call",
+    },
+    {
+      name: "the OpenAI Chat Completions tool terminal",
+      errorMessage: "Provider returned an incomplete or malformed tool call",
+    },
+    {
+      name: "the Mistral tool terminal",
+      errorMessage: "Mistral completed tool call has invalid JSON arguments",
+    },
+    {
+      name: "the Responses tool terminal",
+      errorMessage: "Responses stream completed tool call with invalid JSON arguments",
+    },
+  ])(
+    "retries an empty errored turn with output tokens after a pre-dispatch rejection by $name",
+    ({ errorMessage }) => {
+      // The transport validated the whole tool set, threw before any tool ran, and
+      // discarded the content; the output tokens bought nothing that can replay.
+      const assistant = makeLastAssistant({
+        stopReason: "error",
+        provider: "anthropic",
+        model: "claude-opus-5",
+        errorMessage,
+        usage: { input: 640, output: 1329, totalTokens: 1969 },
+      });
+      expect(
+        shouldRetrySilentErrorAssistantTurn({
+          attempt: makeAttemptResult({ assistantTexts: [], lastAssistant: assistant }),
+          assistant,
+        }),
+      ).toBe(true);
+    },
+  );
+
+  it("retries an empty errored turn with output tokens on the structured rejection code", () => {
+    const assistant = makeLastAssistant({
+      stopReason: "error",
+      provider: "anthropic",
+      model: "claude-opus-5",
+      errorCode: MALFORMED_TOOL_CALL_ARGUMENTS_ERROR_CODE,
+      errorMessage: "Provider rejected the tool call",
+      usage: { input: 640, output: 1329, totalTokens: 1969 },
+    });
+    expect(
+      shouldRetrySilentErrorAssistantTurn({
+        attempt: makeAttemptResult({ assistantTexts: [], lastAssistant: assistant }),
+        assistant,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps refusing a pre-dispatch rejection once visible text or side effects exist", () => {
+    const assistant = makeLastAssistant({
+      stopReason: "error",
+      provider: "anthropic",
+      model: "claude-opus-5",
+      errorMessage: "Provider completed tool call with malformed JSON arguments",
+      usage: { input: 640, output: 1329, totalTokens: 1969 },
+    });
+    expect(
+      shouldRetrySilentErrorAssistantTurn({
+        attempt: makeAttemptResult({
+          assistantTexts: ["Applying the edit now."],
+          lastAssistant: assistant,
+        }),
+        assistant,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRetrySilentErrorAssistantTurn({
+        attempt: makeAttemptResult({
+          assistantTexts: [],
+          lastAssistant: assistant,
+          toolMetas: [{ toolName: "write", replaySafe: false }],
+          replayMetadata: { hadPotentialSideEffects: true, replaySafe: false },
+          currentAttemptReplayMetadata: { hadPotentialSideEffects: true, replaySafe: false },
+        }),
         assistant,
       }),
     ).toBe(false);

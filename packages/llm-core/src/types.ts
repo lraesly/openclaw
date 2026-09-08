@@ -356,6 +356,11 @@ export type StopReason = "stop" | "length" | "toolUse" | "error" | "aborted";
 /** Stable error codes for provider outcomes that cannot be replayed safely. */
 export const PROVIDER_POST_DISPATCH_AMBIGUITY_ERROR_CODE = "PROVIDER_POST_DISPATCH_AMBIGUITY";
 export const PROVIDER_FAILURE_WITH_OUTPUT_ERROR_CODE = "PROVIDER_FAILURE_WITH_OUTPUT";
+/**
+ * Stable error code for a transport that validated a completed tool-call set, found an
+ * argument buffer it could not parse, and rejected the turn before any tool dispatched.
+ */
+export const MALFORMED_TOOL_CALL_ARGUMENTS_ERROR_CODE = "malformed_tool_call_arguments";
 
 /** User turn in a text-model conversation. */
 export interface UserMessage {
