@@ -70,20 +70,27 @@ describe("parseTerminalToolCallArguments", () => {
     ).toEqual({ id: "9223372036854775807", note: "a\nb" });
   });
 
-  it.each(["", "   ", '{"secret":"do-not-echo"', "[]", "null", null])(
-    "rejects non-object or malformed terminal input %# without exposing it",
-    (value) => {
-      for (const options of [undefined, REPAIR]) {
-        const thrown = captureError(() =>
-          parseTerminalToolCallArguments(value, undefined, options),
-        );
-        expect(thrown).toMatchObject({ message: MALFORMED_TOOL_CALL_TERMINAL_ERROR_MESSAGE });
-        expect(String(thrown)).not.toContain("do-not-echo");
-        expect(JSON.stringify(thrown.cause ?? null)).not.toContain("do-not-echo");
-        expect(thrown.errorBody ?? "").not.toContain("do-not-echo");
-      }
-    },
-  );
+  it.each([
+    "",
+    "   ",
+    '{"secret":"do-not-echo"',
+    "[]",
+    "null",
+    null,
+    // Truncated free-text arguments must never be "repaired" into a shorter, executable
+    // command (a cut-off `rm -rf /srv/app/tmp/build-cache` would otherwise become `rm -rf /`).
+    '{"command":"rm -rf /',
+    '{"command":"rm -rf /srv/app/tmp/bu',
+    '{"command":"rm -rf /srv/app/tmp/build-cache","timeout":6',
+  ])("rejects non-object or malformed terminal input %# without exposing it", (value) => {
+    for (const options of [undefined, REPAIR]) {
+      const thrown = captureError(() => parseTerminalToolCallArguments(value, undefined, options));
+      expect(thrown).toMatchObject({ message: MALFORMED_TOOL_CALL_TERMINAL_ERROR_MESSAGE });
+      const surfaced = `${String(thrown)}${JSON.stringify(thrown.cause ?? null)}${thrown.errorBody ?? ""}`;
+      expect(surfaced).not.toContain("do-not-echo");
+      expect(surfaced).not.toContain("rm -rf");
+    }
+  });
 
   it("attaches privacy-safe diagnostics as cause, errorCode, and errorBody", () => {
     const truncated = '{"secret":"do-not-echo"';
