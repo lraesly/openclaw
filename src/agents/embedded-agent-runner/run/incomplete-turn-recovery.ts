@@ -38,7 +38,7 @@ const REASONING_ONLY_RETRY_INSTRUCTION =
 const EMPTY_RESPONSE_RETRY_INSTRUCTION =
   "The previous attempt did not produce a user-visible answer. Continue from the current state and produce the visible answer now. Do not restart from scratch.";
 const SETTLED_TOOL_TERMINAL_CONTINUATION_INSTRUCTION =
-  "The previous assistant turn completed its tool calls but did not produce a user-visible answer. Continue from the current transcript and produce the final user-visible answer now. Do not repeat completed tool calls or restart from scratch.";
+  "The previous assistant turn completed its tool calls but did not produce a user-visible answer. Continue from the current transcript and produce the final user-visible answer now. Do not repeat completed tool calls or restart from scratch. Tools are unavailable in this step: it is a text-only pass, so reply with plain text and do not attempt any tool call.";
 
 export function shouldRetrySilentErrorAssistantTurn(params: {
   attempt: Pick<
@@ -81,23 +81,15 @@ export function shouldRetrySilentErrorAssistantTurn(params: {
     return false;
   }
   if (content.length === 0) {
-    // Positive output usually means the provider made progress a resubmit would
-    // duplicate. A pre-dispatch tool-call rejection is the exception: the transport
-    // validated the whole tool set, threw before any tool ran, and discarded the
-    // content, so those tokens bought nothing that can replay.
-    return !hasPositiveOutputTokenUsage(assistant) || isPreDispatchToolCallRejection(assistant);
+    // Rejected arguments can consume tokens without output; the preceding guards own replay safety.
+    return (
+      !hasPositiveOutputTokenUsage(assistant) ||
+      assistant.errorCode === MALFORMED_TOOL_CALL_ARGUMENTS_ERROR_CODE ||
+      isPreDispatchToolCallRejectionMessage(assistant.errorMessage)
+    );
   }
 
   return hasOnlyAssistantReasoningContent(assistant);
-}
-
-function isPreDispatchToolCallRejection(
-  assistant: NonNullable<EmbeddedRunAttemptResult["lastAssistant"]>,
-): boolean {
-  return (
-    assistant.errorCode === MALFORMED_TOOL_CALL_ARGUMENTS_ERROR_CODE ||
-    isPreDispatchToolCallRejectionMessage(assistant.errorMessage)
-  );
 }
 
 function shouldSkipNonVisibleTurnRetry(params: {

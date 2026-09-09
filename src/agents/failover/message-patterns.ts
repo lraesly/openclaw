@@ -41,15 +41,17 @@ export function isProviderRequestSizeCeilingError(errorMessage?: string): boolea
 // match — those are not assistant-stream contracts.
 export const INCOMPLETE_ASSISTANT_STREAM_RE =
   /^[\w -]*stream ended (?:before (?:message_?stop|(?:a )?terminal (?:finish reason|response event|event))|without (?:a terminal )?finish[_ ]reason)[.!]?$/i;
-// Terminal rejections a transport raises after validating a completed tool-call set and
-// before any tool dispatches. The transport drops the rejected calls from the message, so
-// the turn holds nothing executable and nothing visible that a resubmit could duplicate.
-const PRE_DISPATCH_TOOL_CALL_REJECTION_RE =
-  /^(?:Provider completed tool call with malformed JSON arguments|Provider completed stream with an incomplete tool call|Provider returned an incomplete or malformed tool call|Mistral completed tool call has invalid JSON arguments|Responses stream completed tool call with invalid JSON arguments)[.!]?$/i;
+// These exact transport diagnostics identify rejection, not whether replay is safe.
+const PRE_DISPATCH_TOOL_CALL_REJECTION_MESSAGES = new Set([
+  "Provider completed tool call with malformed JSON arguments",
+  "Provider completed stream with an incomplete tool call",
+  "Provider returned an incomplete or malformed tool call",
+  "Mistral completed tool call has invalid JSON arguments",
+  "Responses stream completed tool call with invalid JSON arguments",
+]);
 
-/** True for the fail-closed tool-argument rejections raised before any tool ran. */
 export function isPreDispatchToolCallRejectionMessage(errorMessage?: string): boolean {
-  return PRE_DISPATCH_TOOL_CALL_REJECTION_RE.test(errorMessage?.trim() ?? "");
+  return errorMessage !== undefined && PRE_DISPATCH_TOOL_CALL_REJECTION_MESSAGES.has(errorMessage);
 }
 const PERIODIC_USAGE_LIMIT_RE =
   /\b(?:daily|weekly|monthly)(?:\/(?:daily|weekly|monthly))* (?:usage )?limit(?:s)?(?: (?:exhausted|reached|exceeded))?\b/i;

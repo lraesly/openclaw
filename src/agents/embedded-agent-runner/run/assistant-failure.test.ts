@@ -756,8 +756,7 @@ describe("handleEmbeddedAssistantFailure", () => {
   });
 
   it("retries a pre-dispatch tool-call rejection whose content was discarded", async () => {
-    // Direct Claude streams discard the whole message on this terminal error, leaving
-    // empty content with positive output usage; the rejected tool set never dispatched.
+    // Buffered Anthropic rejection leaves empty content with positive output usage.
     const fixture = makeExhaustedCredentialFailureInput();
     const assistant = buildEmbeddedRunnerAssistant({
       api: "anthropic-messages",

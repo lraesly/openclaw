@@ -1,9 +1,6 @@
 // Focused incomplete-turn behavior coverage.
 import { describe, expect, it } from "vitest";
-import {
-  MALFORMED_TOOL_CALL_ARGUMENTS_ERROR_CODE,
-  PROVIDER_POST_DISPATCH_AMBIGUITY_ERROR_CODE,
-} from "../../llm/types.js";
+import { PROVIDER_POST_DISPATCH_AMBIGUITY_ERROR_CODE } from "../../llm/types.js";
 import {
   buildEmbeddedRunnerAssistant,
   makeEmbeddedRunnerAttempt,
@@ -156,8 +153,7 @@ describe("incomplete-turn error recovery", () => {
   ])(
     "retries an empty errored turn with output tokens after a pre-dispatch rejection by $name",
     ({ errorMessage }) => {
-      // The transport validated the whole tool set, threw before any tool ran, and
-      // discarded the content; the output tokens bought nothing that can replay.
+      // Empty content and replay-safe attempt evidence are independent of the error message.
       const assistant = makeLastAssistant({
         stopReason: "error",
         provider: "anthropic",
@@ -179,7 +175,7 @@ describe("incomplete-turn error recovery", () => {
       stopReason: "error",
       provider: "anthropic",
       model: "claude-opus-5",
-      errorCode: MALFORMED_TOOL_CALL_ARGUMENTS_ERROR_CODE,
+      errorCode: "malformed_tool_call_arguments",
       errorMessage: "Provider rejected the tool call",
       usage: { input: 640, output: 1329, totalTokens: 1969 },
     });
@@ -191,7 +187,75 @@ describe("incomplete-turn error recovery", () => {
     ).toBe(true);
   });
 
-  it("keeps refusing a pre-dispatch rejection once visible text or side effects exist", () => {
+  it.each([
+    "provider completed tool call with malformed JSON arguments",
+    "Provider completed tool call with malformed json arguments",
+    " Provider completed tool call with malformed JSON arguments",
+    "Provider completed tool call with malformed JSON arguments ",
+    "Provider completed tool call with malformed JSON arguments.",
+    "Error: Provider completed tool call with malformed JSON arguments",
+    "Provider completed tool call with malformed JSON arguments after dispatch",
+    "Provider completed stream with an incomplete tool call.",
+    "Provider returned an incomplete or malformed tool call.",
+    "Mistral completed tool call has invalid JSON arguments.",
+    "Responses stream completed tool call with invalid JSON arguments.",
+  ])("does not retry positive output for a non-exact rejection message: %s", (errorMessage) => {
+    const assistant = makeLastAssistant({
+      stopReason: "error",
+      errorMessage,
+      usage: { input: 640, output: 13, totalTokens: 653 },
+    });
+    expect(
+      shouldRetrySilentErrorAssistantTurn({
+        attempt: makeAttemptResult({ assistantTexts: [], lastAssistant: assistant }),
+        assistant,
+      }),
+    ).toBe(false);
+  });
+
+  it.each([
+    "MALFORMED_TOOL_CALL_ARGUMENTS",
+    " malformed_tool_call_arguments",
+    "malformed_tool_call_arguments ",
+    "malformed_tool_call_arguments_suffix",
+    "invalid_json",
+  ])("does not retry positive output for an unrecognized rejection code: %s", (errorCode) => {
+    const assistant = makeLastAssistant({
+      stopReason: "error",
+      errorCode,
+      errorMessage: "Provider rejected the tool call",
+      usage: { input: 640, output: 13, totalTokens: 653 },
+    });
+    expect(
+      shouldRetrySilentErrorAssistantTurn({
+        attempt: makeAttemptResult({ assistantTexts: [], lastAssistant: assistant }),
+        assistant,
+      }),
+    ).toBe(false);
+  });
+
+  it.each<{ name: string; attempt: Partial<EmbeddedRunAttemptResult> }>([
+    { name: "visible text", attempt: { assistantTexts: ["Applying the edit now."] } },
+    {
+      name: "accepted client call",
+      attempt: { clientToolCalls: [{ name: "pending", params: {} }] },
+    },
+    { name: "yielded work", attempt: { yieldDetected: true } },
+    { name: "approval prompt", attempt: { didSendDeterministicApprovalPrompt: true } },
+    { name: "source reply delivery", attempt: { didDeliverSourceReplyViaMessageTool: true } },
+    {
+      name: "asynchronous work",
+      attempt: { toolMetas: [{ toolName: "probe", asyncStarted: true }] },
+    },
+    { name: "cron creation", attempt: { successfulCronAdds: 1 } },
+    {
+      name: "potential side effects",
+      attempt: {
+        toolMetas: [{ toolName: "write", replaySafe: false }],
+        currentAttemptReplayMetadata: { hadPotentialSideEffects: true, replaySafe: false },
+      },
+    },
+  ])("keeps refusing a pre-dispatch rejection after $name", ({ attempt }) => {
     const assistant = makeLastAssistant({
       stopReason: "error",
       provider: "anthropic",
@@ -201,22 +265,35 @@ describe("incomplete-turn error recovery", () => {
     });
     expect(
       shouldRetrySilentErrorAssistantTurn({
-        attempt: makeAttemptResult({
-          assistantTexts: ["Applying the edit now."],
-          lastAssistant: assistant,
-        }),
+        attempt: makeAttemptResult({ assistantTexts: [], lastAssistant: assistant, ...attempt }),
         assistant,
       }),
     ).toBe(false);
+  });
+
+  it.each([
+    { errorCode: "ERR_WEBSOCKET_NON_RETRYABLE_CLOSE" },
+    { errorCode: PROVIDER_POST_DISPATCH_AMBIGUITY_ERROR_CODE },
+    {
+      errorCode: "malformed_tool_call_arguments",
+      diagnostics: [
+        {
+          type: "provider_refusal",
+          timestamp: 0,
+          details: { provider: "anthropic", category: "cyber" },
+        },
+      ],
+    },
+  ])("preserves terminal rejection evidence: %j", (terminalEvidence) => {
+    const assistant = makeLastAssistant({
+      stopReason: "error",
+      errorMessage: "Provider completed tool call with malformed JSON arguments",
+      usage: { input: 640, output: 13, totalTokens: 653 },
+      ...terminalEvidence,
+    });
     expect(
       shouldRetrySilentErrorAssistantTurn({
-        attempt: makeAttemptResult({
-          assistantTexts: [],
-          lastAssistant: assistant,
-          toolMetas: [{ toolName: "write", replaySafe: false }],
-          replayMetadata: { hadPotentialSideEffects: true, replaySafe: false },
-          currentAttemptReplayMetadata: { hadPotentialSideEffects: true, replaySafe: false },
-        }),
+        attempt: makeAttemptResult({ assistantTexts: [], lastAssistant: assistant }),
         assistant,
       }),
     ).toBe(false);
@@ -246,6 +323,7 @@ describe("incomplete-turn error recovery", () => {
       stopReason: "error",
       provider: "anthropic",
       model: "claude-opus-4-8",
+      errorMessage: "Provider completed tool call with malformed JSON arguments",
       content,
       usage: { input: 100, output: 1120, totalTokens: 1220 },
     });
