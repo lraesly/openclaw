@@ -19,7 +19,20 @@ describe("settled tool-call rejection recovery", () => {
     errorMessage: "Provider completed tool call with malformed JSON arguments",
     errorCode: "malformed_tool_call_arguments",
     content: [],
-    diagnostics: [],
+    diagnostics: [
+      {
+        type: "openai_responses_terminal",
+        timestamp: 1,
+        details: {
+          eventType: "response.completed",
+          responseStatus: "completed",
+          stopReason: "stop",
+          hasRefusal: false,
+          hasError: false,
+          hasIncompleteDetails: false,
+        },
+      },
+    ],
   };
 
   it.each<[string, TransportDropScenario]>([
@@ -82,6 +95,17 @@ describe("settled tool-call rejection recovery", () => {
         }),
       );
       expect(failoverRetryController.advanceAuthProfile).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["malformed_tool_call_arguments", "incomplete_tool_call", undefined])(
+    "requires positive terminal evidence before %s or legacy rejection text",
+    async (errorCode) => {
+      const { recovery, markOwnedTranscriptRetry, continueFromCurrentTranscript } =
+        await recoverAfterTransportDrop({ ...rejectedToolCall, errorCode, diagnostics: [] });
+      expect(recovery).toEqual({ action: "proceed" });
+      expect(markOwnedTranscriptRetry).not.toHaveBeenCalled();
+      expect(continueFromCurrentTranscript).not.toHaveBeenCalled();
     },
   );
 
@@ -201,6 +225,7 @@ describe("settled tool-call rejection recovery", () => {
       {
         errorCode: "incomplete_tool_call",
         errorMessage: "Responses stream completed with an incomplete terminal tool call",
+        diagnostics: [],
       },
     ],
     ["the attempt yielded", { yieldDetected: true }],
@@ -222,6 +247,25 @@ describe("settled tool-call rejection recovery", () => {
     expect(continueFromCurrentTranscript).not.toHaveBeenCalled();
   });
 
+  it.each<TransportDropScenario>([
+    { content: [{ type: "text", text: "I checked the result." }] },
+    { assistantTexts: ["I checked the result."] },
+  ])(
+    "does not capture replay-safe visible output with coherent terminal facts: %j",
+    async (visible) => {
+      const { recovery, markOwnedTranscriptRetry, continueFromCurrentTranscript } =
+        await recoverAfterTransportDrop({
+          ...rejectedToolCall,
+          ...visible,
+          toolName: "read",
+          replaySafe: true,
+        });
+      expect(recovery).toEqual({ action: "proceed" });
+      expect(markOwnedTranscriptRetry).not.toHaveBeenCalled();
+      expect(continueFromCurrentTranscript).not.toHaveBeenCalled();
+    },
+  );
+
   it("leaves a replay-safe rejection to the original-prompt resubmit", async () => {
     // Read-only tools keep the attempt replay-safe; handleEmbeddedAssistantFailure
     // owns that resubmit (PR #142176), so recovery must not continue the transcript.
@@ -229,6 +273,7 @@ describe("settled tool-call rejection recovery", () => {
       ...rejectedToolCall,
       toolName: "read",
       replaySafe: true,
+      diagnostics: [],
     });
     expect(recovery).toEqual({ action: "proceed" });
     expect(continueFromCurrentTranscript).not.toHaveBeenCalled();

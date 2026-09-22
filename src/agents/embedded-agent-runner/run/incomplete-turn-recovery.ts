@@ -49,9 +49,12 @@ function isPreDispatchToolCallRejection(
   }
   const terminalFacts =
     assistant.diagnostics?.filter(({ type }) => type === "openai_responses_terminal") ?? [];
-  // Terminal facts outrank parser codes and legacy text. Missing status metadata
-  // is not the same as an omitted wire status, which the producer records as absent.
+  // Post-effect continuation needs positive terminal evidence before any parser
+  // code or legacy text can admit it. Early validation may leave later refusal or
+  // failure events unread; absence of those facts is not proof of completion.
+  // An omitted wire status is distinct: the producer explicitly records absent.
   if (
+    terminalFacts.length === 0 ||
     terminalFacts.some(
       ({ details }) =>
         details?.eventType !== "response.completed" ||
@@ -65,12 +68,10 @@ function isPreDispatchToolCallRejection(
   ) {
     return false;
   }
-  // Malformed arguments can be rejected before a terminal event is read. An
-  // unfinished call needs positive completion evidence, not just its error code.
   return (
     assistant.errorCode === MALFORMED_TOOL_CALL_ARGUMENTS_ERROR_CODE ||
     isPreDispatchToolCallRejectionMessage(assistant.errorMessage) ||
-    (assistant.errorCode === "incomplete_tool_call" && terminalFacts.length > 0)
+    assistant.errorCode === "incomplete_tool_call"
   );
 }
 
@@ -120,7 +121,7 @@ export function shouldRetrySilentErrorAssistantTurn(params: {
   if (!Array.isArray(content)) {
     return false;
   }
-  if (content.length === 0) {
+  if (content.every((block) => block.type === "text" && !block.text.trim())) {
     // Rejected arguments can consume tokens without output; the preceding guards own replay safety.
     return (
       !hasPositiveOutputTokenUsage(assistant) ||
@@ -155,7 +156,9 @@ export function shouldContinueTranscriptAfterToolCallRejection(params: {
   ) {
     return false;
   }
-  if (shouldRetrySilentErrorAssistantTurn({ attempt, assistant })) {
+  // Replay-safe turns retain their existing retry policy, even when visible
+  // content makes that policy decline a retry. This path is only for effects.
+  if (isCurrentAttemptReplaySafe(attempt)) {
     return false;
   }
   if (

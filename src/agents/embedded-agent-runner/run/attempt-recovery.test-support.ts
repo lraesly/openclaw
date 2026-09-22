@@ -108,7 +108,7 @@ export async function recoverAfterTransportDrop(scenario: TransportDropScenario 
     toolMetas: toolCalls.map((toolCallId) => ({
       toolCallId,
       toolName,
-      replaySafe: false,
+      replaySafe: scenario.replaySafe === true,
       ...(scenario.asyncStarted ? { asyncStarted: true } : {}),
       ...(scenario.terminate ? { terminate: true } : {}),
       ...(scenario.codeModeSuspended ? { codeModeSuspended: true } : {}),

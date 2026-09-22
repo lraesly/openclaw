@@ -60,6 +60,8 @@ function responsesSse(events: Record<string, unknown>[]): string {
 }
 
 function responseTurn(turn: number, rejectedResponseStatus: string): string {
+  const malformedItemDone = turn === 3 && rejectedResponseStatus.startsWith("item-done-");
+  const terminalStatus = rejectedResponseStatus.replace(/^item-done-/, "");
   const call = (id: string, name: string, args: string, status = "completed") => ({
     type: "function_call",
     id: "fc_" + id,
@@ -89,7 +91,7 @@ function responseTurn(turn: number, rejectedResponseStatus: string): string {
         ? [call("call_failed_read", "read", JSON.stringify({ path: "missing-proof-file.txt" }))]
         : turn === 3
           ? [
-              ...(rejectedResponseStatus === "refusal"
+              ...(terminalStatus === "refusal"
                 ? [
                     {
                       ...message(""),
@@ -97,20 +99,36 @@ function responseTurn(turn: number, rejectedResponseStatus: string): string {
                     },
                   ]
                 : []),
-              call("call_rejected_edit", "edit", TRUNCATED_FRAGMENT, "incomplete"),
+              call(
+                "call_rejected_edit",
+                "edit",
+                TRUNCATED_FRAGMENT,
+                malformedItemDone ? "completed" : "incomplete",
+              ),
             ]
           : [message(RECOVERED_MARKER)];
   return responsesSse([
+    ...(malformedItemDone
+      ? [
+          {
+            type: "response.output_item.done",
+            output_index: 0,
+            item: call("call_rejected_edit", "edit", TRUNCATED_FRAGMENT),
+          },
+        ]
+      : []),
     {
-      type: "response.completed",
+      type:
+        malformedItemDone && terminalStatus === "failed" ? "response.failed" : "response.completed",
       response: {
         id: "resp_proof_" + turn,
         model: MODEL_ID,
         status:
-          turn === 3 && !["refusal", "error"].includes(rejectedResponseStatus)
-            ? rejectedResponseStatus
+          turn === 3 && !["refusal", "error"].includes(terminalStatus)
+            ? terminalStatus
             : "completed",
-        ...(turn === 3 && rejectedResponseStatus === "error"
+        ...(turn === 3 &&
+        (terminalStatus === "error" || (malformedItemDone && terminalStatus === "failed"))
           ? { error: { code: "content_filter", message: "Synthetic provider rejection" } }
           : {}),
         output,
@@ -266,6 +284,12 @@ describe("issue #147040 real runtime proof", () => {
           "incomplete",
           "refusal",
           "error",
+          // Without terminal drain, even a later coherent completion is unread.
+          // Fail closed after committed effects rather than guessing its outcome.
+          "item-done-completed",
+          "item-done-refusal",
+          "item-done-error",
+          "item-done-failed",
         ]) {
           await fs.rm(path.join(workspaceDir, "note.txt"), { force: true });
           rejectedResponseStatus = status;
